@@ -234,8 +234,8 @@ a.sourceLine {
 <p>Now that we have performed the tuning runs on the cross-validation folds, we can look at how the model fitting performance metrics vary as a function of the values of mtry and trees we used in the latin-hypercube grid. We will base parameter selection on the highest roc-auc metric we achieved. Tuning found an mtry value of 10 and a tress value of 1538 to give an roc_auc of ~1.0. That is a suspiciously high roc_auc so we should look for signs of overfitting when we assess the testing split. We now finalize our model by passing the tuned hyperparameters to the workflow.</p>
 <div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">show_best</span>(rf_res, <span class="st">&#39;roc_auc&#39;</span>)</span></code></pre></div>
 <pre><code>## # A tibble: 5 x 8
-##    mtry trees .metric .estimator  mean     n   std_err .config              
-##   &lt;int&gt; &lt;int&gt; &lt;chr&gt;   &lt;chr&gt;      &lt;dbl&gt; &lt;int&gt;     &lt;dbl&gt; &lt;chr&gt;                
+##    mtry trees .metric .estimator  mean     n   std_err .config
+##   &lt;int&gt; &lt;int&gt; &lt;chr&gt;   &lt;chr&gt;      &lt;dbl&gt; &lt;int&gt;     &lt;dbl&gt; &lt;chr&gt;
 ## 1    10  1538 roc_auc hand_till   1.00    10 0.0000309 Preprocessor1_Model20
 ## 2     7  1750 roc_auc hand_till   1.00    10 0.0000293 Preprocessor1_Model22
 ## 3     8  1181 roc_auc hand_till   1.00    10 0.0000313 Preprocessor1_Model23
@@ -260,11 +260,11 @@ a.sourceLine {
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="fu">collect_metrics</span>(final_pml)</span></code></pre></div>
 <pre><code>## # A tibble: 2 x 4
-##   .metric  .estimator .estimate .config             
-##   &lt;chr&gt;    &lt;chr&gt;          &lt;dbl&gt; &lt;chr&gt;               
+##   .metric  .estimator .estimate .config
+##   &lt;chr&gt;    &lt;chr&gt;          &lt;dbl&gt; &lt;chr&gt;
 ## 1 accuracy multiclass     0.994 Preprocessor1_Model1
 ## 2 roc_auc  hand_till      1.00  Preprocessor1_Model1</code></pre>
-<p>The reported out-of-sample roc_auc is ~1.0, which matches the value found with the training data. This gives us some confidence that our model is not overfitted and ca be expected to give goosd predictions for new, unlabeled data sets.</p>
+<p>The reported out-of-sample roc_auc is ~1.0 and an OOS error based on accuracy of 0.4%, which matches the values found with the training data. This gives us some confidence that our model is not overfitted and ca be expected to give goosd predictions for new, unlabeled data sets.</p>
 <p>As a final checheck of the model performance we can calculate the multi-class prediction accuracy.</p>
 <div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">collect_predictions</span>(final_pml) <span class="sc">%&gt;%</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    <span class="fu">accuracy</span>(classe, .pred_class)</span></code></pre></div>
@@ -291,26 +291,26 @@ a.sourceLine {
 <span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a>final_predicted</span></code></pre></div>
 <pre><code>## # A tibble: 20 x 2
 ##    problem_id .pred_class
-##         &lt;int&gt; &lt;fct&gt;      
-##  1          1 B          
-##  2          2 A          
-##  3          3 B          
-##  4          4 A          
-##  5          5 A          
-##  6          6 E          
-##  7          7 D          
-##  8          8 B          
-##  9          9 A          
-## 10         10 A          
-## 11         11 B          
-## 12         12 C          
-## 13         13 B          
-## 14         14 A          
-## 15         15 E          
-## 16         16 E          
-## 17         17 A          
-## 18         18 B          
-## 19         19 B          
+##         &lt;int&gt; &lt;fct&gt;
+##  1          1 B
+##  2          2 A
+##  3          3 B
+##  4          4 A
+##  5          5 A
+##  6          6 E
+##  7          7 D
+##  8          8 B
+##  9          9 A
+## 10         10 A
+## 11         11 B
+## 12         12 C
+## 13         13 B
+## 14         14 A
+## 15         15 E
+## 16         16 E
+## 17         17 A
+## 18         18 B
+## 19         19 B
 ## 20         20 B</code></pre>
 <p>These class predictions were submitted before completing this write up and a 100% score was obtained.</p>
 </div>
