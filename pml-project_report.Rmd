@@ -1,0 +1,228 @@
+---
+title: "Project: Practical Machine Learning - Exercise Quality Study"
+author: "David Erhart"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(visdat)
+library(naniar)
+library(fauxnaif)
+library(GGally)
+library(tidymodels)
+library(themis)
+library(randomForest)
+library(vip)
+library(here)
+```
+
+## Executive Summary
+
+A random forest machine learning model was fit to a set of exercise quality data with the intent of predicting the 'quality' of the exercise effort. The tidymodel ecosystem was used with tuning of two hyperparameters. With a robust cross-validation optimization of the tuning parameters, a classification model with > 99% out-of-sample accuracy was obtained.
+
+
+## Background
+
+Excerpted from Course Project Instructions:
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+## Exploratory Data Analysis and Cleaning
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har and were download with the hyperlinks provided and stored in the project data folder.
+```{r cache=TRUE}
+pml.testing <- read.csv(here('data', 'pml-testing.csv'))
+pml.training <- read.csv(here('data', 'pml-training.csv'))
+```
+
+We want to a take a quick look at the training data to assess the degree of missingness and other data uncleanliness issues. We will use the visdata function to show the degree of missingness.
+
+```{r out.width = '100%', cache=TRUE}
+vis_dat(pml.training, warn_large_data = FALSE)
+```
+The column names are a mess since there 160 columns. The important thing to notice is there are many variables that have almost 100% missing data. Further, looking at the character variables we find many empty cells with rare rows that contain the text '#DIV/0'; suggesting some data integrity issues. Also, the first seven variables look like they contain information that will not generalize to future cases. As a result of these choices, the cleaned data (this procedure was performed on both the training and testing data sets) is processed into two new data frames (new_pml_training and new_pml_testing) for use in our modeling efforts.
+
+```{r}
+na_variables <- pml.training %>%
+    mutate(across(where(is.character), ~na_if_in(., c('#DIV/0!', '')))) %>%
+    miss_var_summary() %>%
+    filter(pct_miss >= 5)
+
+new_pml_training <- pml.training %>%
+    select(-na_variables$variable, -c(X:num_window)) %>%
+    drop_na()
+
+new_pml_testing <- pml.testing %>%
+    select(-na_variables$variable, -c(X:num_window))
+```
+
+We can now use visdat to confirm that things are cleaner.
+
+```{r out.width = '100%', cache=TRUE}
+vis_dat(new_pml_training, warn_large_data = FALSE)
+```
+
+Things look much better with only one character variable left (the outcome, 'classe') and no more N/As. One last check we can perform is a look at how uniformly the counts of the five different 'classe' values are distributed in the training dataset. A quick count shows that 'classe' A occurs ~2 times the frequency of the other classes. This is not such a large difference that we would need to consider downsampling class A or upsampling the other classes in our validation folds.
+
+```{r echo=TRUE}
+new_pml_training %>%
+    count(classe, sort=TRUE)
+```
+
+We are going to need training and testing splits created from the new_pml_training data frame for cross-validation. We will create a 75% (training)/25% (testing) split with stratification by 'classe' for use in this case.
+
+```{r, cache=TRUE}
+set.seed(123)
+pml_splits <- initial_split(new_pml_training, prop = 3/4, strata = classe)
+training_split <- training(pml_splits)
+testing_split <- testing(pml_splits)
+
+```
+
+We will also create 25 cross-validation folds to have available for hyperparameter tuning and model fit checking.
+
+```{r, cache=TRUE}
+set.seed(234)
+classe_folds <- vfold_cv(training_split)
+```
+
+We're now ready to start with model selection and setup.
+
+## Model Selection and Setup
+
+Since we're interested in performing multi-class classification (classifying by 'classe'), the a random forest model seems to be an appropriate approach. [ As an opportunity to get more experience using the Tidymodels ecosystem, I will perform the modeling with those tools (for example using parsnip instead of caret)]
+
+The basic model setup involves defining the recipe that establishes the relationship between the outcome, 'classe', and the predictors, everything else [in this case classe ~ .], as well as the training dataset.
+
+The machine learning engine uses the 'ranger' method for a random forest multinomial classification and will tune two of the hyperparameters, mtry and trees, using the cross-validation folds. Anticipating that we will want to assess variable importance, we will have the engine calculate the importance metric using the Gini index (using the impurity method).
+
+```{r}
+pml_rec <- recipe(classe ~ ., data = training_split)
+
+pml_rf_spec <- rand_forest(
+    mtry = tune(),
+    trees = tune()) %>%
+    set_engine('ranger', importance= 'impurity') %>%
+    set_mode('classification')
+```
+
+The next step in preparing for tuning mtry and trees we need to create a grid of candidate hyperpameter values that maximize model performance. We are using a space-filling latin-hypercube grid with 25 mtry-trees value pairs.
+
+```{r}
+rf_grid <- grid_latin_hypercube(
+    finalize(mtry(), training_split),
+    trees(),
+    size = 25
+)
+```
+
+The final step setting up a tidymodel is the definition of a workflow that wraps around the recipe and model spec.
+
+```{r}
+pml_wf <- workflow() %>%
+    add_recipe(pml_rec) %>%
+    add_model(pml_rf_spec)
+```
+
+## Modeling Results
+
+We're ready to kick off running the model to find the best values for the hyperparameters. Note we are using parallel processing since it takes ~2 hours of compute time on a 3.6GHz Intel Xenon-based Windows computer with 64Gb of RAM.
+
+```{r cache=TRUE}
+doParallel::registerDoParallel()
+
+set.seed(456)
+rf_res <- tune_grid(
+    pml_wf,
+    resamples = classe_folds,
+    grid = rf_grid,
+    control = control_grid(save_pred = TRUE)
+)
+```
+
+We now have the modeling results from applying the tuning grid to the cross-validation folds.
+
+## Discussion and Test Sample Predictions
+
+Now that we have performed the tuning runs on the cross-validation folds, we can look at how the model fitting performance metrics vary as a function of the values of mtry and trees we used in the latin-hypercube grid. We will base parameter selection on the highest roc-auc metric we achieved. Tuning found an mtry value of 10 and a tress value of 1538 to give an roc_auc of ~1.0. That is a suspiciously high roc_auc so we should look for signs of overfitting when we assess the testing split. We now finalize our model by passing the tuned hyperparameters to the workflow.
+
+```{r}
+show_best(rf_res, 'roc_auc')
+best_auc <- select_best(rf_res, 'roc_auc')
+
+final_rf <- finalize_workflow(
+    pml_wf,
+    best_auc
+)
+```
+
+Since there were >50 predictors in the training data set it would be interesting to see which of these had the biggest impact on the final model. As noted earlier, we set up the model to track the importance across all of the random trees that were tried. We can now plot the 10 most important predictors (based on the Gini Index).
+
+```{r cache=TRUE}
+final_rf %>%
+    fit(data = training_split) %>%
+    extract_fit_parsnip() %>%
+    vip(geom = 'point') +
+    labs(y = 'Variable Importance (Gini Index)')
+```
+
+From this variable importance plot we which predictors were responsible for driving higher purity (cleaner separation) at each tree branch. Knowing these important predictors might give us an idea about the physical source of the differentiation between classes.
+
+We still have to get an estimate for the out-of-sample error in our model using the data from the testing split. With tidymodels you can easily fit the test split using the tuned model and calculate the key model performance metrics on the data that was not used to train the model.
+
+```{r cache=TRUE}
+final_pml <- last_fit(final_rf, pml_splits)
+
+collect_metrics(final_pml)
+```
+
+The reported out-of-sample roc_auc is ~1.0, which matches the value found with the training data. This gives us some confidence that our model is not overfitted and ca be expected to give goosd predictions for new, unlabeled data sets.
+
+As a final checheck of the model performance we can calculate the multi-class prediction accuracy.
+```{r cache=TRUE}
+collect_predictions(final_pml) %>%
+    accuracy(classe, .pred_class)
+```
+
+This a very high accuracy for a multi-class prediction model. We should be pretty confident in making predictions with it when we use new data from a similar source. The confusion matrix (shown as a heatmap) is presented below. The off-diagonal (the mispredictions) are very low; matching the roc_auc and accuracy we calculated above.
+
+```{r cache=TRUE}
+collect_predictions(final_pml) %>%
+    conf_mat(classe, .pred_class) %>%
+    autoplot(type = 'heatmap') +
+    labs(x = 'True value for Classe',
+         y = 'Predicted value for Classe')
+```
+
+The only thing we have left to do is pass the unlabeled test data set to the model and submit the results for the project quiz responses.
+
+```{r cache=TRUE, message=FALSE}
+final_fitted_model <- extract_workflow(final_pml)
+
+final_predicted <- new_pml_testing %>%
+    select(-problem_id) %>%
+    predict(final_fitted_model, ., type = 'class') %>%
+    bind_cols(new_pml_testing$problem_id, .) %>%
+    rename(problem_id = ...1)
+
+final_predicted
+```
+
+These class predictions were submitted before completing this write up and a 100% score was obtained.
